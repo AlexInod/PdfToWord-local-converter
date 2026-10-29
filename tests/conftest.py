@@ -84,6 +84,30 @@ def sample_docx(tmp_path):
     return path
 
 
+# Lines of near-equal width, so pdf2docx joins them into one paragraph. No
+# line ends in a space, as in LaTeX output. Avoid "fi"/"fl": the font ligates them.
+WRAPPED_LINES = [
+    "The audience would soon get to meet Peter Parker",
+    "„at the beginning of a story about a hero who is more",
+    "„spider” than „man”, and this paper gives a short pre-",
+    "sentation of the movie to the readers of a whole clasă",
+    "întreagă of students.",
+]
+
+
+@pytest.fixture
+def wrapped_lines_pdf(tmp_path):
+    """One paragraph whose line ends need a space or lose a hyphen."""
+    path = tmp_path / "wrapped.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    html = "<p style='font-family:serif;font-size:12pt'>" + "<br>".join(WRAPPED_LINES) + "</p>"
+    page.insert_htmlbox(pymupdf.Rect(72, 72, 523, 400), html)
+    doc.save(path)
+    doc.close()
+    return path
+
+
 @pytest.fixture
 def word_spans_pdf(tmp_path):
     path = tmp_path / "words.pdf"

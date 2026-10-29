@@ -3,6 +3,7 @@ import functools
 import logging
 import os
 import re
+import unicodedata
 import zipfile
 from functools import lru_cache
 from pathlib import Path
@@ -344,6 +345,71 @@ def _patch_pdf2docx_blank_spans() -> None:
     Spans.restore = restore
 
 
+LINE_END_HYPHENS = ("-", "\u00ad")
+
+
+def _is_word_edge(c: str) -> bool:
+    """Letter, digit or non-dash punctuation in a script that spaces words."""
+    if len(c) != 1:
+        return False
+    if c.isalnum():
+        return unicodedata.east_asian_width(c) not in ("W", "F")
+    category = unicodedata.category(c)
+    return category.startswith("P") and category != "Pd"
+
+
+def _needs_line_end_space(end: str, start: str) -> bool:
+    """True when the last char of a line and the first of the next are two words."""
+    return _is_word_edge(end) and _is_word_edge(start)
+
+
+def _adjust_last_word(lines, delete_end_line_hyphen: bool) -> None:
+    """pdf2docx's Lines.adjust_last_word without its ASCII-only word test.
+
+    The original tests c.encode().isalnum(), so a line ending next to „ ” or
+    a letter such as ă glued onto the following line.
+    """
+    from pdf2docx.text.TextSpan import TextSpan
+
+    instances = lines._instances
+    for line, next_line in zip(instances, instances[1:]):
+        end_span, start_span = line.spans[-1], next_line.spans[0]
+        if not isinstance(end_span, TextSpan) or not isinstance(start_span, TextSpan):
+            continue
+        if not end_span.chars or not start_span.chars:
+            continue
+        end_char, start = end_span.chars[-1], start_span.chars[0].c[:1]
+        if (
+            delete_end_line_hyphen
+            and end_char.c.endswith(LINE_END_HYPHENS)
+            and start.islower()
+        ):
+            end_char.c = end_char.c[:-1]
+        if _needs_line_end_space(end_char.c[-1:], start):
+            end_char.c += " "
+
+
+def _patch_pdf2docx_line_ends() -> None:
+    """Install _adjust_last_word in pdf2docx (once)."""
+    # Depends on pdf2docx 0.5.13 internals (Lines.adjust_last_word): re-verify on a pin bump.
+    from pdf2docx.text.Lines import Lines
+
+    original = Lines.adjust_last_word
+    if getattr(original, "_unicode_line_ends", False):
+        return
+
+    @functools.wraps(original)
+    def adjust_last_word(self, delete_end_line_hyphen):
+        try:
+            _adjust_last_word(self, delete_end_line_hyphen)
+        except Exception:
+            logging.warning("line-end adjustment fell back for one block", exc_info=True)
+            original(self, delete_end_line_hyphen)
+
+    adjust_last_word._unicode_line_ends = True
+    Lines.adjust_last_word = adjust_last_word
+
+
 def pdf_to_docx(
     src: Path,
     dst: Path,
@@ -359,6 +425,10 @@ def pdf_to_docx(
         _patch_pdf2docx_blank_spans()
     except Exception as exc:
         logging.warning("Blank-span patch skipped: %s", exc)
+    try:
+        _patch_pdf2docx_line_ends()
+    except Exception as exc:
+        logging.warning("Line-end patch skipped: %s", exc)
 
     part = part_path(dst)
     root = logging.getLogger()
@@ -371,7 +441,8 @@ def pdf_to_docx(
             root.setLevel(logging.INFO)
         cv = Converter(str(src))
         # A page that fails to parse would otherwise be dropped silently.
-        cv.convert(str(part), ignore_page_error=False)
+        # Line-end hyphens are mostly word breaks (LaTeX hyphenates by default).
+        cv.convert(str(part), ignore_page_error=False, delete_end_line_hyphen=True)
         try:
             mapping = font_substitutions(src, part)
             if mapping:
