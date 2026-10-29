@@ -21,7 +21,16 @@ The first time, Windows may show a blue "Windows protected your PC" (SmartScreen
 
 - Scanned PDFs (pages that are only pictures) are not supported yet.
 - Password-protected PDFs are refused.
+- Password-protected or write-protected Word files are refused.
 - Layout fidelity varies: complex documents may not look identical after conversion.
+
+## Where files go
+
+The converted file is saved next to the original. An existing file is never overwritten: a number is added instead, for example `Report (1).docx`.
+
+## If something goes wrong
+
+The app writes problems to a log file at `%LOCALAPPDATA%\PDF Converter\app.log`. Include it when you report a problem.
 
 ## Building from source
 
