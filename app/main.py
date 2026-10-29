@@ -30,30 +30,30 @@ def drop_paths(event: dict) -> list[str]:
 
 class Api:
     def __init__(self):
-        self.mode = PDF_TO_WORD
-        self.worker: ConversionWorker | None = None
-        self.window = None
+        self._mode = PDF_TO_WORD
+        self._worker: ConversionWorker | None = None
+        self._window = None
 
     def set_mode(self, mode: str) -> None:
         if mode in (PDF_TO_WORD, WORD_TO_PDF):
-            self.mode = mode
+            self._mode = mode
 
     def choose_files(self) -> None:
-        result = self.window.create_file_dialog(
+        result = self._window.create_file_dialog(
             webview.FileDialog.OPEN,
             allow_multiple=True,
-            file_types=FILE_TYPES[self.mode],
+            file_types=FILE_TYPES[self._mode],
         )
         if result:
-            self.worker.add(result, self.mode)
+            self._worker.add(result, self._mode)
 
     def open_folder(self) -> None:
-        output = self.worker.last_output
+        output = self._worker.last_output
         if output is not None:
             os.startfile(output.parent)
 
     def show_file(self, job_id) -> None:
-        job = self.worker.jobs.get(int(job_id))
+        job = self._worker.jobs.get(int(job_id))
         if job is not None and job.output is not None:
             subprocess.Popen(["explorer", "/select,", str(job.output)])
 
@@ -80,12 +80,12 @@ def main() -> None:
 
     def push(job) -> None:
         try:
-            api.window.evaluate_js(f"window.app.onJob({json.dumps(job.to_dict())})")
+            api._window.evaluate_js(f"window.app.onJob({json.dumps(job.to_dict())})")
         except Exception:
             logging.exception("Could not push job update")
 
     worker = ConversionWorker(on_update=push)
-    api.worker = worker
+    api._worker = worker
     window = webview.create_window(
         "PDF Converter",
         url=str(Path(__file__).parent / "ui" / "index.html"),
@@ -94,11 +94,11 @@ def main() -> None:
         height=600,
         min_size=(420, 480),
     )
-    api.window = window
+    api._window = window
 
     def on_drop(event) -> None:
         try:
-            worker.add(drop_paths(event), api.mode)
+            worker.add(drop_paths(event), api._mode)
         except Exception:
             logging.exception("Drop failed")
 
