@@ -48,7 +48,31 @@ def test_stop_removes_partial_output(text_pdf, monkeypatch):
     monkeypatch.setattr("app.worker.pdf_to_docx", fake)
     w = ConversionWorker(on_update=lambda j: None)
     [job] = w.add([text_pdf], PDF_TO_WORD)
-    started.wait(5)
-    w.stop()
+    try:
+        started.wait(5)
+        w.stop()
+        assert not part_path(job.output).exists()
+    finally:
+        release.set()
+
+
+def test_late_write_after_stop_is_cleaned_up(text_pdf, monkeypatch):
+    started, release = threading.Event(), threading.Event()
+
+    def fake(src, dst, progress=None):
+        part_path(dst).touch()
+        started.set()
+        release.wait()
+        part_path(dst).touch()
+
+    monkeypatch.setattr("app.worker.pdf_to_docx", fake)
+    w = ConversionWorker(on_update=lambda j: None)
+    [job] = w.add([text_pdf], PDF_TO_WORD)
+    try:
+        started.wait(5)
+        w.stop()
+    finally:
+        release.set()
+    wait_for(lambda: w._current is None)
     assert not part_path(job.output).exists()
-    release.set()
+    assert job.status == "converting"

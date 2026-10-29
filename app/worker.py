@@ -113,6 +113,8 @@ class ConversionWorker:
                 pdf_to_docx(job.source, job.output, lambda page, pages: self._progress(job, page, pages))
             else:
                 docx_to_pdf(job.source, job.output)
+            if self._stopping:
+                return
             job.status = DONE
             self.last_output = job.output
         except ConversionError as error:
@@ -123,6 +125,8 @@ class ConversionWorker:
             job.status = FAILED
             job.message = MSG_FAILED
         finally:
+            if self._stopping and job.output is not None:
+                part_path(job.output).unlink(missing_ok=True)
             with self._lock:
                 self._current = None
         self._notify(job)
