@@ -1,0 +1,23 @@
+# Brainstorm mockups and session state
+.superpowers/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Build output
+build/
+dist/
+*.spec
+
+# Tests
+.pytest_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
