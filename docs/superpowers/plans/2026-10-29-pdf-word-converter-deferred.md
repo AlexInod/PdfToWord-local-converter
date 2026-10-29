@@ -26,3 +26,4 @@ Findings the per-task and final reviews rated Minor or parked with a ruling. Non
 - Final: parked — startup-failure dialog names a log that may not exist when logging setup itself failed; webview.start() exception after show reported as "could not start" — Ruling: cosmetic, deferred
 - Final: parked — rename collision yields `Report (1) (1).docx` instead of `Report (2).docx` — Ruling: acceptable (race only, never overwrites)
 - Final: parked — LibreOffice timeout kills soffice.exe only (soffice.bin may survive); fresh profile adds first-run time — Ruling: deferred, LibreOffice not on dev machine
+- Font substitution: table key SCHOLA also matches a hypothetical font named "Scholarly" (maps to Century Schoolbook instead of the class fallback) — harmless degrade; pdf2docx still glues words on some tightly justified LaTeX lines (engine limitation, not fixable by post-processing)
