@@ -51,3 +51,37 @@ def output_path_for(source: Path, mode: str) -> Path:
 def part_path(dst: Path) -> Path:
     """Temporary name used while writing dst."""
     return dst.with_name(dst.name + ".part")
+
+
+def _is_scanned_page(page) -> bool:
+    """True when the page has almost no text and one image covers most of it."""
+    if len(page.get_text().strip()) >= 20:
+        return False
+    page_area = page.rect.get_area()
+    if page_area <= 0:
+        return False
+    for image in page.get_images(full=True):
+        for rect in page.get_image_rects(image[0]):
+            if rect.get_area() >= 0.8 * page_area:
+                return True
+    return False
+
+
+def inspect_pdf(path: Path) -> int:
+    """Return the page count; raise ConversionError for unusable PDFs."""
+    import pymupdf
+
+    try:
+        doc = pymupdf.open(path)
+    except Exception:
+        raise ConversionError(MSG_FAILED) from None
+    with doc:
+        if doc.needs_pass:
+            raise ConversionError(MSG_PASSWORD_PDF)
+        count = doc.page_count
+        if count == 0:
+            raise ConversionError(MSG_FAILED)
+        scanned = sum(1 for page in doc if _is_scanned_page(page))
+    if scanned * 2 > count:
+        raise ConversionError(MSG_SCANNED)
+    return count
