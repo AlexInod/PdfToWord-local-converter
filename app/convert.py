@@ -349,13 +349,13 @@ LINE_END_HYPHENS = ("-", "\u00ad")
 
 
 def _is_word_edge(c: str) -> bool:
-    """Letter, digit or non-dash punctuation in a script that spaces words."""
+    """Letter, digit, symbol or non-dash punctuation in a script that spaces words."""
     if len(c) != 1:
         return False
     if c.isalnum():
         return unicodedata.east_asian_width(c) not in ("W", "F")
     category = unicodedata.category(c)
-    return category.startswith("P") and category != "Pd"
+    return category.startswith(("P", "S")) and category != "Pd"
 
 
 def _needs_line_end_space(end: str, start: str) -> bool:
