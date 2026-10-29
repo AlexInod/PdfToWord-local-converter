@@ -8,6 +8,7 @@ MISSING_WEBVIEW2_TEXT = (
     "This app needs Microsoft Edge WebView2, which is free from Microsoft:\n"
     "https://developer.microsoft.com/microsoft-edge/webview2/"
 )
+STARTUP_FAILED_TEXT = "PDF Converter could not start. Details were written to:\n{log}"
 BROWSER_ARGS = "--disable-features=msSmartScreenProtection --disable-background-networking"
 
 
@@ -28,8 +29,30 @@ def webview2_version() -> str | None:
     return None
 
 
+# MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND: nothing else is on screen yet.
+MESSAGE_BOX_FLAGS = 0x10 | 0x40000 | 0x10000
+
+
+def _message_box(text: str) -> None:
+    ctypes.windll.user32.MessageBoxW(0, text, "PDF Converter", MESSAGE_BOX_FLAGS)
+
+
 def show_missing_webview2() -> None:
-    ctypes.windll.user32.MessageBoxW(0, MISSING_WEBVIEW2_TEXT, "PDF Converter", 0x10)
+    _message_box(MISSING_WEBVIEW2_TEXT)
+
+
+def show_startup_failed(log: Path | str) -> None:
+    _message_box(STARTUP_FAILED_TEXT.format(log=log))
+
+
+def close_splash() -> None:
+    """Close the PyInstaller splash screen, if there is one."""
+    try:
+        import pyi_splash
+
+        pyi_splash.close()
+    except Exception:
+        pass
 
 
 def configure_environment() -> None:

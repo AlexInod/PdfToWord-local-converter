@@ -74,6 +74,18 @@ class ConversionWorker:
             self._queue.put(job)
         return new_jobs
 
+    @property
+    def current_mode(self) -> str | None:
+        """Mode of the job being converted right now, or None."""
+        with self._lock:
+            return self._current.mode if self._current is not None else None
+
+    def join(self, timeout: float) -> None:
+        """Wait up to timeout seconds for the worker thread to finish."""
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout)
+
     def stop(self) -> None:
         self._stopping = True
         while True:
@@ -110,11 +122,12 @@ class ConversionWorker:
             job.status = CONVERTING
             self._notify(job)
             if job.mode == PDF_TO_WORD:
-                pdf_to_docx(job.source, job.output, lambda page, pages: self._progress(job, page, pages))
+                written = pdf_to_docx(job.source, job.output, lambda page, pages: self._progress(job, page, pages))
             else:
-                docx_to_pdf(job.source, job.output)
+                written = docx_to_pdf(job.source, job.output)
             if self._stopping:
                 return
+            job.output = written
             job.status = DONE
             self.last_output = job.output
         except ConversionError as error:

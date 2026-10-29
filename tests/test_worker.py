@@ -1,7 +1,7 @@
 import threading
 import time
 
-from app.convert import MSG_NOT_PDF, PDF_TO_WORD, part_path
+from app.convert import MSG_NOT_PDF, PDF_TO_WORD, WORD_TO_PDF, part_path
 from app.worker import ConversionWorker
 
 
@@ -76,3 +76,47 @@ def test_late_write_after_stop_is_cleaned_up(text_pdf, monkeypatch):
     wait_for(lambda: w._current is None)
     assert not part_path(job.output).exists()
     assert job.status == "converting"
+
+
+def test_output_is_the_path_actually_written(text_pdf, monkeypatch):
+    def fake(src, dst, progress=None):
+        written = dst.with_name("elsewhere.docx")
+        written.touch()
+        return written
+
+    monkeypatch.setattr("app.worker.pdf_to_docx", fake)
+    w = ConversionWorker(on_update=lambda j: None)
+    [job] = w.add([text_pdf], PDF_TO_WORD)
+    wait_for(lambda: job.status == "done")
+    assert job.output == text_pdf.with_name("elsewhere.docx")
+    assert w.last_output == job.output
+
+
+def test_join_waits_for_running_word_job(sample_docx, monkeypatch):
+    started, release = threading.Event(), threading.Event()
+
+    def fake(src, dst):
+        started.set()
+        release.wait()
+        return dst
+
+    monkeypatch.setattr("app.worker.docx_to_pdf", fake)
+    w = ConversionWorker(on_update=lambda j: None)
+    assert w.current_mode is None
+    w.join(0.1)  # never started: returns at once
+    w.add([sample_docx], WORD_TO_PDF)
+    try:
+        assert started.wait(5)
+        assert w.current_mode == WORD_TO_PDF
+        w.stop()
+        t0 = time.monotonic()
+        w.join(0.1)
+        assert time.monotonic() - t0 < 1
+        assert w._thread.is_alive()
+    finally:
+        release.set()
+    t0 = time.monotonic()
+    w.join(5)
+    assert time.monotonic() - t0 < 5
+    assert not w._thread.is_alive()
+    assert w.current_mode is None
