@@ -1,4 +1,5 @@
 """PDF <-> Word conversion helpers. Heavy libraries are imported lazily."""
+import functools
 import logging
 import os
 import re
@@ -290,6 +291,53 @@ def font_substitutions(pdf: Path, docx: Path) -> dict[str, str]:
     return mapping
 
 
+def _is_blank_span(span: dict) -> bool:
+    return (
+        "image" not in span
+        and not span.get("style")
+        and not "".join(c["c"] for c in span["chars"]).strip()
+    )
+
+
+def _merge_blank_spans(raws: list[dict]) -> list[dict]:
+    """Fold space-only spans into the preceding text span.
+
+    pdf2docx drops unstyled blank spans, which glues words together when the
+    PDF puts each inter-word space in its own span.
+    """
+    merged: list[dict] = []
+    previous = None
+    for span in raws:
+        if previous is not None and _is_blank_span(span):
+            a, b = previous["bbox"], span["bbox"]
+            previous = dict(
+                previous,
+                chars=[*previous["chars"], *span["chars"]],
+                bbox=(min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])),
+            )
+            merged[-1] = previous
+            continue
+        merged.append(span)
+        previous = span if "image" not in span and not _is_blank_span(span) else None
+    return merged
+
+
+def _patch_pdf2docx_blank_spans() -> None:
+    """Make pdf2docx keep the spaces that _merge_blank_spans folds in (once)."""
+    from pdf2docx.text.Spans import Spans
+
+    original = Spans.restore
+    if getattr(original, "_merges_blank_spans", False):
+        return
+
+    @functools.wraps(original)
+    def restore(self, raws):
+        return original(self, _merge_blank_spans(raws))
+
+    restore._merges_blank_spans = True
+    Spans.restore = restore
+
+
 def pdf_to_docx(
     src: Path,
     dst: Path,
@@ -301,6 +349,10 @@ def pdf_to_docx(
     """
     inspect_pdf(src)
     from pdf2docx import Converter
+    try:
+        _patch_pdf2docx_blank_spans()
+    except Exception as exc:
+        logging.warning("Blank-span patch skipped: %s", exc)
 
     part = part_path(dst)
     root = logging.getLogger()

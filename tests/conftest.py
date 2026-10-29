@@ -82,3 +82,19 @@ def sample_docx(tmp_path):
     document.add_paragraph("Hello from PDF Converter")
     document.save(path)
     return path
+
+
+@pytest.fixture
+def word_spans_pdf(tmp_path):
+    path = tmp_path / "words.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    size = 12
+    for y, words in ((100.0, ["Hello", "there", "world"]), (140.0, ["Another", "line", "here"])):
+        x = 72.0
+        for w in words:
+            page.insert_text((x, y), w, fontsize=size, fontname="helv")
+            x += pymupdf.get_text_length(w, fontname="helv", fontsize=size) + 0.33 * size
+    doc.save(path)
+    doc.close()
+    return path
