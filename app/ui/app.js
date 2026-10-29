@@ -84,11 +84,14 @@
       $("drop-hint").textContent = COPY[mode].hint;
       if (initial) return;
       api("set_mode", mode);
-      if (word) {
-        api("office_available").then(function (ok) {
-          if (app.mode === "word_to_pdf") $("banner").hidden = ok !== false;
-        });
-      }
+      app.checkOffice();
+    },
+
+    checkOffice: function () {
+      if (app.mode !== "word_to_pdf") return;
+      api("office_available").then(function (ok) {
+        if (app.mode === "word_to_pdf") $("banner").hidden = ok !== false;
+      });
     }
   };
   window.app = app;
@@ -106,8 +109,19 @@
     drop.addEventListener("dragleave", function () { drop.classList.remove("hover"); });
     drop.addEventListener("drop", function (e) { e.preventDefault(); drop.classList.remove("hover"); });
 
+    // Dropping a file outside #drop would navigate the WebView away.
+    ["dragover", "drop"].forEach(function (t) {
+      window.addEventListener(t, function (e) { e.preventDefault(); });
+    });
+
     app.setMode("pdf_to_word", true); // render only; no API call before pywebviewready
   }
+
+  // Replay state that was set before the bridge existed.
+  window.addEventListener("pywebviewready", function () {
+    api("set_mode", app.mode);
+    app.checkOffice();
+  });
 
   document.addEventListener("DOMContentLoaded", init);
 })();
