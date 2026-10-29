@@ -156,11 +156,12 @@ FONT_TABLE = {
     "Monotype Corsiva": ("CHANCERY", "CHORUS"),
     "Cambria Math": ("CMSY", "CMMI", "CMEX", "MSAM", "MSBM"),
 }
+GLYPH_FONTS = ("DINGBAT", "SYMBOL", "WINGDING", "WEBDING")
 CLASS_FALLBACK = {"mono": "Courier New", "sans": "Arial", "serif": "Times New Roman"}
 
 
 @lru_cache(maxsize=1)
-def installed_font_names() -> set[str]:
+def installed_font_names() -> frozenset[str]:
     """Lower-cased font names from the Windows registry, e.g. 'arial (truetype)'."""
     import winreg
 
@@ -172,12 +173,29 @@ def installed_font_names() -> set[str]:
                     names.add(winreg.EnumValue(key, index)[0].lower())
         except OSError:
             continue
-    return names
+    return frozenset(names)
+
+
+def _registry_families(entry: str) -> set[str]:
+    """Family names in a registry entry: 'arial bold (truetype)' -> {'arial'}."""
+    entry = re.sub(r"\s*\([^)]*\)\s*$", "", entry)
+    families = set()
+    for part in entry.split(" & "):
+        part = part.strip()
+        families.add(part)
+        while True:
+            stripped = re.sub(r"\s+(bold|italic|regular)$", "", part)
+            if stripped == part:
+                break
+            part = stripped
+            families.add(part)
+    return families
 
 
 def font_is_installed(name: str, installed: set[str]) -> bool:
-    prefix = name.lower()
-    return any(entry.startswith(prefix) for entry in installed)
+    """True when name equals an installed family (style words ignored)."""
+    wanted = name.lower()
+    return any(wanted in _registry_families(entry) for entry in installed)
 
 
 def _pdf2docx_name(name: str) -> str:
@@ -206,10 +224,13 @@ def substitute_for(name: str, cls: str | None, installed: set[str]) -> str | Non
     if font_is_installed(name, installed):
         return None
     key = name.upper().replace(" ", "").replace("-", "")
+    if any(word in key for word in GLYPH_FONTS):
+        return None
+    key = key.removeprefix("TEXGYRE")
     best, best_len = None, 0
     for substitute, keys in FONT_TABLE.items():
         for candidate in keys:
-            if candidate in key and len(candidate) > best_len:
+            if key.startswith(candidate) and len(candidate) > best_len:
                 best, best_len = substitute, len(candidate)
     if best is None:
         best = CLASS_FALLBACK.get(cls or "serif", "Times New Roman")
