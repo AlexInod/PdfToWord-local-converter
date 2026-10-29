@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -43,4 +44,7 @@ def test_wrong_extension_raises_mode_message(tmp_path):
 
 
 def test_part_path():
-    assert part_path(Path("D:/x/Report.docx")) == Path("D:/x/Report.docx.part")
+    dst = Path("D:/x/Report.docx")
+    part = part_path(dst)
+    assert part.name == f"Report.docx.{os.getpid()}.part"
+    assert part.parent == dst.parent

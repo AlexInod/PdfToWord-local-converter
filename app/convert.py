@@ -52,8 +52,26 @@ def output_path_for(source: Path, mode: str) -> Path:
 
 
 def part_path(dst: Path) -> Path:
-    """Temporary name used while writing dst."""
-    return dst.with_name(dst.name + ".part")
+    """Temporary name used while writing dst (per process, in dst's folder)."""
+    return dst.with_name(f"{dst.name}.{os.getpid()}.part")
+
+
+_RENAME_ATTEMPTS = 5
+
+
+def finish_part(part: Path, dst: Path) -> Path:
+    """Rename part to dst without ever overwriting; return the final path.
+
+    os.rename refuses an existing target on Windows. If dst appeared while
+    converting (e.g. another instance wrote it), the next free name is used.
+    """
+    for _ in range(_RENAME_ATTEMPTS):
+        try:
+            os.rename(part, dst)
+            return dst
+        except FileExistsError:
+            dst = unique_path(dst)
+    raise ConversionError(MSG_CANNOT_SAVE)
 
 
 def _is_scanned_page(page) -> bool:
@@ -120,8 +138,11 @@ def pdf_to_docx(
     src: Path,
     dst: Path,
     progress: Callable[[int, int], None] | None = None,
-) -> None:
-    """Convert a PDF to DOCX at dst, reporting progress(page, pages)."""
+) -> Path:
+    """Convert a PDF to DOCX, reporting progress(page, pages).
+
+    Returns the path written: dst, or a numbered name if dst appeared meanwhile.
+    """
     inspect_pdf(src)
     from pdf2docx import Converter
 
@@ -135,8 +156,9 @@ def pdf_to_docx(
             root.addHandler(handler)
             root.setLevel(logging.INFO)
         cv = Converter(str(src))
-        cv.convert(str(part))
-        os.replace(part, dst)
+        # A page that fails to parse would otherwise be dropped silently.
+        cv.convert(str(part), ignore_page_error=False)
+        return finish_part(part, dst)
     except ConversionError:
         part.unlink(missing_ok=True)
         raise

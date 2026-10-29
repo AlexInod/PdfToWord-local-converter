@@ -5,14 +5,14 @@ import pytest
 
 from app.convert import (
     pdf_to_docx, part_path, output_path_for, ConversionError,
-    PDF_TO_WORD, MSG_SCANNED, MSG_CANNOT_SAVE, _PageProgressHandler,
+    PDF_TO_WORD, MSG_FAILED, MSG_SCANNED, MSG_CANNOT_SAVE, _PageProgressHandler,
 )
 
 
 def test_converts_and_reports_progress(text_pdf, tmp_path):
     dst = tmp_path / "out.docx"
     seen = []
-    pdf_to_docx(text_pdf, dst, progress=lambda p, n: seen.append((p, n)))
+    assert pdf_to_docx(text_pdf, dst, progress=lambda p, n: seen.append((p, n))) == dst
     assert dst.exists()
     assert not part_path(dst).exists()
     assert seen[-1] == (3, 3)
@@ -69,3 +69,30 @@ def test_logging_state_restored_after_failure_with_progress(text_pdf, tmp_path):
             progress=lambda p, n: None,
         )
     _assert_logging_clean(before)
+
+
+def test_destination_that_appeared_meanwhile_is_not_overwritten(text_pdf, tmp_path):
+    dst = tmp_path / "out.docx"
+    dst.write_bytes(b"someone else's file")
+    written = pdf_to_docx(text_pdf, dst)
+    assert written == tmp_path / "out (1).docx" and written.exists()
+    assert dst.read_bytes() == b"someone else's file"
+    assert not part_path(dst).exists()
+
+
+def test_page_that_fails_to_parse_fails_the_file(text_pdf, tmp_path, monkeypatch):
+    from pdf2docx.page.Page import Page
+
+    original = Page.parse
+
+    def parse(self, **settings):
+        if self.id == 1:
+            raise RuntimeError("broken page")
+        return original(self, **settings)
+
+    monkeypatch.setattr(Page, "parse", parse)
+    dst = tmp_path / "out.docx"
+    with pytest.raises(ConversionError) as e:
+        pdf_to_docx(text_pdf, dst)
+    assert e.value.message == MSG_FAILED
+    assert not dst.exists() and not part_path(dst).exists()
