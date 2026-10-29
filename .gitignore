@@ -21,3 +21,6 @@ dist/
 .idea/
 Thumbs.db
 desktop.ini
+
+# Playwright MCP screenshots
+.playwright-mcp/
