@@ -1,0 +1,4 @@
+pdf2docx==0.5.13
+pymupdf==1.28.2
+pywebview==6.2.1
+pywin32==312
