@@ -58,3 +58,19 @@ def test_pdf_to_docx_keeps_spaces_between_words(word_spans_pdf, tmp_path):
     text = "\n".join(p.text for p in Document(dst).paragraphs)
     assert "Hello there world" in text
     assert "Another line here" in text
+
+
+def test_merge_failure_does_not_fail_conversion(word_spans_pdf, tmp_path, monkeypatch):
+    def boom(raws):
+        raise KeyError("chars")
+
+    monkeypatch.setattr("app.convert._merge_blank_spans", boom)
+    dst = tmp_path / "out.docx"
+    pdf_to_docx(word_spans_pdf, dst)
+    assert dst.exists()
+    assert Document(dst).paragraphs
+
+
+def test_conversion_installs_patch(word_spans_pdf, tmp_path):
+    pdf_to_docx(word_spans_pdf, tmp_path / "out.docx")
+    assert Spans.restore._merges_blank_spans is True

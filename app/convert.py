@@ -324,6 +324,7 @@ def _merge_blank_spans(raws: list[dict]) -> list[dict]:
 
 def _patch_pdf2docx_blank_spans() -> None:
     """Make pdf2docx keep the spaces that _merge_blank_spans folds in (once)."""
+    # Depends on pdf2docx 0.5.13 internals (Spans.restore): re-verify on a pin bump.
     from pdf2docx.text.Spans import Spans
 
     original = Spans.restore
@@ -332,7 +333,12 @@ def _patch_pdf2docx_blank_spans() -> None:
 
     @functools.wraps(original)
     def restore(self, raws):
-        return original(self, _merge_blank_spans(raws))
+        try:
+            merged = _merge_blank_spans(raws)
+        except Exception:
+            logging.warning("blank-span merge skipped for one line", exc_info=True)
+            merged = raws
+        return original(self, merged)
 
     restore._merges_blank_spans = True
     Spans.restore = restore
