@@ -410,6 +410,144 @@ def _patch_pdf2docx_line_ends() -> None:
     Lines.adjust_last_word = adjust_last_word
 
 
+def _drop_wrapped_line_tabs(lines) -> None:
+    """Remove the TAB pdf2docx puts before a line that continues the previous one.
+
+    The TAB only reproduces the PDF indent of a wrapped line (e.g. a hanging
+    bibliography entry). Word wraps at different places, so it lands mid-line.
+    """
+    instances = lines._instances
+    for previous, line in zip(instances, instances[1:]):
+        if line.tab_stop and not previous.line_break and not previous.in_same_row(line):
+            line.tab_stop = 0
+
+
+def _patch_pdf2docx_wrapped_tabs() -> None:
+    """Run _drop_wrapped_line_tabs after pdf2docx decides line breaks (once)."""
+    # Depends on pdf2docx 0.5.13 internals (Lines.parse_line_break runs after
+    # Lines.parse_tab_stop): re-verify on a pin bump.
+    from pdf2docx.text.Lines import Lines
+
+    original = Lines.parse_line_break
+    if getattr(original, "_drops_wrapped_tabs", False):
+        return
+
+    @functools.wraps(original)
+    def parse_line_break(self, *args, **kwargs):
+        result = original(self, *args, **kwargs)
+        try:
+            _drop_wrapped_line_tabs(self)
+        except Exception:
+            logging.warning("wrapped-line tabs kept for one block", exc_info=True)
+        return result
+
+    parse_line_break._drops_wrapped_tabs = True
+    Lines.parse_line_break = parse_line_break
+
+
+# "Title . . . . . 12": a title, at least four leader dots, a page number.
+TOC_LINE = re.compile(
+    r"^(?P<head>.*?\S)\s*(?:\.\s*){4,}(?P<page>\d{1,4}|[ivxlcdm]{1,7})\s*$", re.IGNORECASE
+)
+TOC_LEADER = re.compile(r"(?:\.\s*){4,}")
+# "A title too long for dots<TAB>12": only trusted next to a TOC_LINE.
+TOC_TAIL = re.compile(r"^(?P<head>.*?\S)\s*\t\s*(?P<page>\d{1,4}|[ivxlcdm]{1,7})\s*$", re.IGNORECASE)
+
+
+def _section_widths(body):
+    """Yield (paragraph element, text width of its section) for body paragraphs."""
+    from docx.oxml.ns import qn
+    from docx.section import Section
+
+    pending = []
+    for child in body.iterchildren():
+        if child.tag == qn("w:p"):
+            pending.append(child)
+            sect = child.find(qn("w:pPr") + "/" + qn("w:sectPr"))
+        elif child.tag == qn("w:sectPr"):
+            sect = child
+        else:
+            continue
+        if sect is not None:
+            section = Section(sect, None)
+            width = section.page_width - section.left_margin - section.right_margin
+            yield from ((p, width) for p in pending)
+            pending = []
+
+
+def _fix_toc_paragraph(p, width, pattern) -> bool:
+    """Replace typed leader dots with one right-aligned dot-leader TAB."""
+    from copy import deepcopy
+
+    from docx.enum.text import WD_TAB_ALIGNMENT, WD_TAB_LEADER
+    from docx.text.run import Run
+
+    match = pattern.match(p.text)
+    if not match or "\n" in p.text or len(TOC_LEADER.findall(p.text)) > 1:
+        return False  # one entry per paragraph only; merged entries are left alone
+    head, page = match["head"], match["page"]
+    runs = [Run(r, p) for r in p._p.xpath("./w:r | ./w:hyperlink/w:r")]
+    if not runs:
+        return False
+    source, done = runs[-1], 0
+    for run in runs:
+        text, start = run.text, done
+        done += len(text)
+        if start >= len(head):
+            if page in text:
+                source = run
+            run._r.getparent().remove(run._r)
+        elif done > len(head):
+            run.text = text[: len(head) - start]
+    for link in p._p.xpath("./w:hyperlink[not(w:r)]"):
+        p._p.remove(link)
+    for text in ("\t", page):
+        r = deepcopy(source._r)
+        p._p.append(r)
+        Run(r, p).text = text
+
+    stops = p.paragraph_format.tab_stops
+    kept = sorted(stops, key=lambda s: s.position)[: head.count("\t")]
+    kept = [(s.position, s.alignment, s.leader) for s in kept]
+    stops.clear_all()
+    for position, alignment, leader in kept:
+        stops.add_tab_stop(position, alignment, leader)
+    edge = width - (p.paragraph_format.right_indent or 0)
+    stops.add_tab_stop(edge, WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS)
+    return True
+
+
+def fix_toc_leaders(docx: Path) -> int:
+    """Line up table-of-contents page numbers; return how many lines changed."""
+    from docx import Document
+    from docx.text.paragraph import Paragraph
+
+    document = Document(str(docx))
+    lines = [
+        (Paragraph(p, document._body), width)
+        for p, width in _section_widths(document.element.body)
+    ]
+    fixed = {i for i, (p, width) in enumerate(lines) if _fix_toc_paragraph(p, width, TOC_LINE)}
+    grown = bool(fixed)
+    while grown:
+        grown = False
+        for i, (p, width) in enumerate(lines):
+            if i in fixed or not ({i - 1, i + 1} & fixed):
+                continue
+            if _fix_toc_paragraph(p, width, TOC_TAIL):
+                fixed.add(i)
+                grown = True
+    changed = len(fixed)
+    if changed:
+        tmp = docx.with_name(f"{docx.name}.toc")
+        try:
+            document.save(str(tmp))
+            os.replace(tmp, docx)
+        finally:
+            tmp.unlink(missing_ok=True)
+    return changed
+
+
 def pdf_to_docx(
     src: Path,
     dst: Path,
@@ -429,6 +567,10 @@ def pdf_to_docx(
         _patch_pdf2docx_line_ends()
     except Exception as exc:
         logging.warning("Line-end patch skipped: %s", exc)
+    try:
+        _patch_pdf2docx_wrapped_tabs()
+    except Exception as exc:
+        logging.warning("Wrapped-line tab patch skipped: %s", exc)
 
     part = part_path(dst)
     root = logging.getLogger()
@@ -450,6 +592,10 @@ def pdf_to_docx(
                 substitute_fonts(part, mapping)
         except Exception as exc:
             logging.warning("Font substitution skipped: %s", exc)
+        try:
+            fix_toc_leaders(part)
+        except Exception as exc:
+            logging.warning("Table-of-contents fix skipped: %s", exc)
         return finish_part(part, dst)
     except ConversionError:
         part.unlink(missing_ok=True)

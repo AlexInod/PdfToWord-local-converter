@@ -108,6 +108,60 @@ def wrapped_lines_pdf(tmp_path):
     return path
 
 
+TOC_ENTRIES = [
+    (72, "Foreword", "3"),
+    (72, "1 Presentation of the Film", "4"),
+    (90, "1.1 General presentation", "4"),
+    (90, "1.2 The plot in short", "5"),
+    (72, "2 The Harmony Between the Heroic and the Emotional, and the Actors Behind It", "8"),
+    (90, "2.1 Heroism as a choice of the heart", "8"),
+]
+
+
+@pytest.fixture
+def toc_pdf(tmp_path):
+    """Table of contents with typed dot leaders, as LaTeX and Word draw them."""
+    path = tmp_path / "toc.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    y = 100.0
+    for x, title, number in TOC_ENTRIES:
+        page.insert_text((x, y), title, fontsize=12, fontname="tiro")
+        end = x + pymupdf.get_text_length(title, fontname="tiro", fontsize=12) + 8
+        count = int((480 - end) / 6)
+        if count >= 4:  # a long title leaves no room for dots
+            page.insert_text((end, y), " ".join("." * count), fontsize=12, fontname="tiro")
+        page.insert_text((515, y), number, fontsize=12, fontname="tiro")
+        y += 30
+    doc.save(path)
+    doc.close()
+    return path
+
+
+BIBLIOGRAPHY = [
+    ("1. Bryant, Jacob. The Punisher Joins the Cast of the New Movie With Tom",
+     "Holland. TheWrap, 20 June 2025."),
+    ("2. Couprie, Quentin. The most grounded hero yet: reviews land two days",
+     "before release. 3DVF, July 2026."),
+]
+
+
+@pytest.fixture
+def hanging_indent_pdf(tmp_path):
+    """Numbered entries whose wrapped lines are indented under the text."""
+    path = tmp_path / "bibliography.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    y = 100.0
+    for first, second in BIBLIOGRAPHY:
+        page.insert_text((72, y), first, fontsize=11, fontname="tiro")
+        page.insert_text((88, y + 13), second, fontsize=11, fontname="tiro")
+        y += 30
+    doc.save(path)
+    doc.close()
+    return path
+
+
 @pytest.fixture
 def word_spans_pdf(tmp_path):
     path = tmp_path / "words.pdf"
