@@ -18,8 +18,12 @@ _LIBREOFFICE_PATHS = (
     Path(r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"),
 )
 _WD_EXPORT_FORMAT_PDF = 17
+_OLE_SIGNATURE = bytes.fromhex("d0cf11e0a1b11ae1")
+_FIB_PASSWORD_BITS = 0x01 | 0x08  # fEncrypted | fWriteReservation
+_MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3
 _STGM_READ = 0x00
 _STGM_SHARE_DENY_WRITE = 0x20
+_STGM_SHARE_EXCLUSIVE = 0x10  # streams must be opened exclusively
 
 
 def word_installed() -> bool:
@@ -65,25 +69,36 @@ def _is_encrypted(src: Path) -> bool:
     """True for a Word file that needs a password, judged without opening Word.
 
     Word shows a modal password prompt even when hidden with alerts off, which
-    would hang the worker, so encryption is detected from the file itself.
+    would hang the worker, so protection is detected from the file itself.
     Encrypted .docx files are OLE containers holding an EncryptedPackage
-    stream; legacy .doc files set the fEncrypted bit in the FIB.
+    stream; legacy .doc files set fEncrypted or fWriteReservation in the FIB.
+    If the file cannot be inspected reliably, raise ConversionError(MSG_FAILED)
+    rather than let Word prompt.
     """
     import pythoncom
 
-    if _has_write_password(src):
-        return True
+    try:
+        with open(src, "rb") as handle:
+            signature = handle.read(len(_OLE_SIGNATURE))
+    except OSError as exc:
+        raise ConversionError(MSG_FAILED) from exc
+    if signature != _OLE_SIGNATURE:
+        return _has_write_password(src)
+
     flags = _STGM_READ | _STGM_SHARE_DENY_WRITE
     try:
         storage = pythoncom.StgOpenStorage(str(src), None, flags)
-    except pythoncom.com_error:
-        return False  # not an OLE container: plain .docx (zip) or unreadable
-    names = {element[0] for element in storage.EnumElements()}
-    if "EncryptedPackage" in names:
-        return True
-    if "WordDocument" in names:
-        fib = bytes(storage.OpenStream("WordDocument", None, flags).Read(12))
-        return len(fib) >= 12 and bool(fib[11] & 0x01)
+        names = {element[0] for element in storage.EnumElements()}
+        if "EncryptedPackage" in names:
+            return True
+        if "WordDocument" in names:
+            stream = storage.OpenStream(
+                "WordDocument", None, _STGM_READ | _STGM_SHARE_EXCLUSIVE
+            )
+            fib = bytes(stream.Read(12))
+            return len(fib) >= 12 and bool(fib[11] & _FIB_PASSWORD_BITS)
+    except pythoncom.com_error as exc:
+        raise ConversionError(MSG_FAILED) from exc
     return False
 
 
@@ -100,6 +115,7 @@ def _word_to_pdf(src: Path, out_pdf: Path) -> None:
         word = win32com.client.DispatchEx("Word.Application")
         word.Visible = False
         word.DisplayAlerts = 0
+        word.AutomationSecurity = _MSO_AUTOMATION_SECURITY_FORCE_DISABLE
         # A wrong password makes Word raise instead of prompting; an
         # unprotected file ignores it.
         doc = word.Documents.Open(
