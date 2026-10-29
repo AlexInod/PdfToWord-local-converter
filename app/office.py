@@ -1,5 +1,5 @@
 """Word -> PDF via Microsoft Word (COM), falling back to LibreOffice."""
-import gc
+import re
 import shutil
 import subprocess
 import tempfile
@@ -44,8 +44,25 @@ def office_available() -> bool:
     return word_installed() or find_libreoffice() is not None
 
 
+_WRITE_PROTECTION = re.compile(
+    rb"<w:writeProtection\s[^>]*(?:w:hash|w:cryptProviderType|w:algorithmName)="
+)
+
+
+def _has_write_password(src: Path) -> bool:
+    """True for a .docx with a password to modify (Word prompts for it)."""
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(src) as package:
+            settings = package.read("word/settings.xml")
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return False
+    return _WRITE_PROTECTION.search(settings) is not None
+
+
 def _is_encrypted(src: Path) -> bool:
-    """True for a password-protected Word file, judged without opening Word.
+    """True for a Word file that needs a password, judged without opening Word.
 
     Word shows a modal password prompt even when hidden with alerts off, which
     would hang the worker, so encryption is detected from the file itself.
@@ -54,6 +71,8 @@ def _is_encrypted(src: Path) -> bool:
     """
     import pythoncom
 
+    if _has_write_password(src):
+        return True
     flags = _STGM_READ | _STGM_SHARE_DENY_WRITE
     try:
         storage = pythoncom.StgOpenStorage(str(src), None, flags)
@@ -112,10 +131,7 @@ def _word_to_pdf(src: Path, out_pdf: Path) -> None:
                 word.Quit()
             except Exception:
                 pass
-        # Drop COM proxies before uninitializing, else release hits a dead
-        # server and crashes the process.
-        word = doc = None
-        gc.collect()
+        word = doc = None  # drop COM proxies before uninitializing
         pythoncom.CoUninitialize()
 
 
