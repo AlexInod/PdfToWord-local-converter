@@ -1,5 +1,8 @@
 """PDF <-> Word conversion helpers. Heavy libraries are imported lazily."""
+import logging
+import os
 from pathlib import Path
+from typing import Callable
 
 PDF_TO_WORD = "pdf_to_word"
 WORD_TO_PDF = "word_to_pdf"
@@ -85,3 +88,67 @@ def inspect_pdf(path: Path) -> int:
     if scanned * 2 > count:
         raise ConversionError(MSG_SCANNED)
     return count
+
+
+_PAGE_RECORD = "(%d/%d) Page %d"
+_CREATING_MARKER = "[4/4] Creating pages"
+
+
+class _PageProgressHandler(logging.Handler):
+    """Forward pdf2docx's per-page log records from the parsing pass only."""
+
+    def __init__(self, progress: Callable[[int, int], None]):
+        super().__init__(level=logging.INFO)
+        self._progress = progress
+        self._parsing_done = False
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if self._parsing_done:
+            return
+        if isinstance(record.msg, str) and _CREATING_MARKER in record.msg:
+            self._parsing_done = True
+            return
+        if record.msg != _PAGE_RECORD or len(record.args) < 2:
+            return
+        page, pages = record.args[0], record.args[1]
+        if page == pages:
+            self._parsing_done = True
+        self._progress(page, pages)
+
+
+def pdf_to_docx(
+    src: Path,
+    dst: Path,
+    progress: Callable[[int, int], None] | None = None,
+) -> None:
+    """Convert a PDF to DOCX at dst, reporting progress(page, pages)."""
+    inspect_pdf(src)
+    from pdf2docx import Converter
+
+    part = part_path(dst)
+    root = logging.getLogger()
+    previous_level = root.level
+    handler = _PageProgressHandler(progress) if progress else None
+    cv = None
+    try:
+        if handler:
+            root.addHandler(handler)
+            root.setLevel(logging.INFO)
+        cv = Converter(str(src))
+        cv.convert(str(part))
+        os.replace(part, dst)
+    except ConversionError:
+        part.unlink(missing_ok=True)
+        raise
+    except OSError as exc:
+        part.unlink(missing_ok=True)
+        raise ConversionError(MSG_CANNOT_SAVE) from exc
+    except Exception as exc:
+        part.unlink(missing_ok=True)
+        raise ConversionError(MSG_FAILED) from exc
+    finally:
+        if cv is not None:
+            cv.close()
+        if handler:
+            root.removeHandler(handler)
+            root.setLevel(previous_level)
