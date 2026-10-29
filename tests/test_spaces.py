@@ -87,7 +87,8 @@ def test_conversion_installs_patch(word_spans_pdf, tmp_path):
 
 @pytest.mark.parametrize(
     "end, start",
-    [("r", "„"), ("”", "T"), ("ă", "î"), ("e", "a"), ("1", "x"), (",", "a")],
+    [("r", "„"), ("”", "T"), ("ă", "î"), ("e", "a"), ("1", "x"), (",", "a"),
+     ("t", "$"), ("t", "€"), ("%", "a"), ("t", "+")],
 )
 def test_line_end_gets_space_between_words(end, start):
     assert _needs_line_end_space(end, start)
